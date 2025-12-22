@@ -1,0 +1,35 @@
+device: cuda:0
+seed: 1024
+
+graphs_name:
+  - Cora
+  - Pubmed
+  - Citeseer
+  - Chameleon
+  - Squirrel
+  - Cornell
+
+graphs_k:
+  - 30
+  - 30
+  - 30
+  - 15
+  - 15
+  - 15
+
+PreModel:
+  lr: 0.005
+  hidden_dim: 64
+  output_dim: 512
+  gcn_num_layers: 3
+  edge_dropout: 0.5 
+  gcn_dropout: 0.1
+  epochs: 60
+  patience: 10
+
+DownModel:
+  down_dataset: Cora #Cora Pubmed Citeseer Chameleon Squirrel Cornell
+  k_shot: 5
+  down_tasks: 50
+  down_epoch: 100
+  down_lr: 0.001
