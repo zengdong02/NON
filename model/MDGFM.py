@@ -19,7 +19,7 @@ class MDGFM(nn.Module):
         # GCN 主干
         self.gcn = GcnLayers(hidden_dim, output_dim, gcn_num_layers, gcn_dropout)
 
-        self.structureLearner = StructureLearner(edge_dropout, True)
+        self.structureLearner = StructureLearner(edge_dropout)
 
     def forward(self, features_list, adj_list, graphs_k):
         x_list = features_list[:]
@@ -43,7 +43,7 @@ class MDGFM(nn.Module):
             loss += calc_lower_bound(logits, re_logits, pos_eye)
             loss += calc_lower_bound(logits, re_logits, re_adj)
         
-        return loss
+        return loss / num_graphs
 
     def get_backbone_model(self, freeze=True):
         gcn_copy = copy.deepcopy(self.gcn)
@@ -51,11 +51,12 @@ class MDGFM(nn.Module):
         detached_pre_tokens = [t.token.detach() for t in self.pre_tokens]
         detached_global_token = self.global_token.token.detach()
 
+        gcn_backbone = self.gcn
         if freeze:
-            for param in gcn_copy.parameters():
+            for param in gcn_backbone.parameters():
                 param.requires_grad = False
-            gcn_copy.eval() 
+            gcn_backbone.eval()
 
-        return detached_pre_tokens, detached_global_token, gcn_copy
+        return detached_pre_tokens, detached_global_token, gcn_backbone
 
         

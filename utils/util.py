@@ -189,8 +189,6 @@ def calc_lower_bound(z_1, z_2, pos, temperature=0.2):
     lori_2 = -torch.log(torch.clamp(prob_2.mul(pos).sum(dim=-1), min=EOS)).mean()
 
     return (lori_1 + lori_2) / 2
-
-
 def knn_fast(X, k, b):
     device = X.device 
     
@@ -198,11 +196,10 @@ def knn_fast(X, k, b):
     index = 0
     num_nodes = X.shape[0]
     
+    # 只需要存储基础的三元组，移除 norm 相关变量
     values = torch.zeros(num_nodes * (k + 1), device=device)
     rows = torch.zeros(num_nodes * (k + 1), device=device)
     cols = torch.zeros(num_nodes * (k + 1), device=device)
-    norm_row = torch.zeros(num_nodes, device=device)
-    norm_col = torch.zeros(num_nodes, device=device)
     
     while index < num_nodes:
         if (index + b) > num_nodes:
@@ -212,30 +209,24 @@ def knn_fast(X, k, b):
             
         sub_tensor = X[index:index + b]
         similarities = torch.mm(sub_tensor, X.t())
+        
+        # 取 Top K
         vals, inds = similarities.topk(k=k + 1, dim=-1)
         vals = torch.clamp(vals, min=0.0)
         
         start_idx = index * (k + 1)
         end_idx = end * (k + 1)
+        
         values[start_idx:end_idx] = vals.view(-1)
         cols[start_idx:end_idx] = inds.view(-1).float()
         
         current_rows = torch.arange(index, end, device=device).view(-1, 1).repeat(1, k + 1).view(-1)
         rows[start_idx:end_idx] = current_rows.float()
         
-        norm_row[index: end] = torch.sum(vals, dim=1)
-        norm_col.index_add_(-1, inds.view(-1), vals.view(-1))
-        
         index += b
         
-    norm = norm_row + norm_col
     rows = rows.long()
     cols = cols.long()
-
-    EOS = 1e-10
-    norm = torch.clamp(norm, min=EOS)
-    
-    values *= (torch.pow(norm[rows], -0.5) * torch.pow(norm[cols], -0.5))
     
     return rows, cols, values
 

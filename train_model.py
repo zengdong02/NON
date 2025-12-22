@@ -32,8 +32,9 @@ def main():
     model.to(device)
 
     optimiser = optim.Adam(model.parameters(), lr=Config.pre_lr, weight_decay=0.0001)
+    # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimiser, mode='min', factor=0.5, patience=5)
 
-    best_loss = 1e9
+    best_loss = float('inf')
     model_wait = 0
     for epoch in tqdm(range(Config.epochs), desc="Training Progress", ncols=100):
         loss = 0
@@ -43,9 +44,11 @@ def main():
         loss = model(features_list, adj_list, graphs_k)
 
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=3.0)
         optimiser.step()
 
         current_loss = loss.item()
+        # scheduler.step(current_loss)
         if current_loss < best_loss:
             best_loss = current_loss
             model_wait = 0
@@ -58,11 +61,17 @@ def main():
             tqdm.write(f'Early stopping at epoch {epoch}!')
             break
 
+    del features_list, labels_list, adj_list, model, optimiser
+    torch.cuda.empty_cache()
+
     print('#'*100)
     print('Downastream dataset is ',Config.down_dataset)
 
-    model.load_state_dict(torch.load(Config.save_path, map_location=torch.device(device)))
-    pre_tokens, global_token, gcn = model.get_backbone_model(freeze=True)
+    loaded_model = MDGFM(len(upstream_list), Config.hidden_dim, Config.output_dim, Config.gcn_num_layers, Config.gcn_dropout, Config.edge_dropout)
+    loaded_model.load_state_dict(torch.load(Config.save_path, map_location=device))
+    loaded_model.to(device)
+
+    pre_tokens, global_token, gcn = loaded_model.get_backbone_model(freeze=True)
     num_classes = len(torch.unique(down_labels))
     accs = []
     
@@ -81,7 +90,10 @@ def main():
 
         down_model = DownModel(pre_tokens, global_token, gcn, Config.hidden_dim, num_classes, Config.edge_dropout)
         down_model.to(device)
-        down_optimiser = torch.optim.Adam(down_model.parameters(), lr=Config.down_lr, weight_decay=0.0001)
+        down_optimiser = torch.optim.Adam(down_model.parameters(), lr=Config.down_lr, weight_decay=5e-4) 
+        
+        # best_down_loss = float('inf')
+        # best_down_state = None
 
         for _ in range(Config.down_epoch):
             down_model.train()
@@ -110,7 +122,7 @@ def main():
             
             dists = torch.cdist(query_emb, final_prototypes, p=2)
             preds = torch.argmin(dists, dim=1)
-            acc = (preds == query_lbl).float().mean().item()
+            acc = (preds == query_lbl).float().mean().item() * 100
 
             accs.append(acc)
             tqdm.write(f"Run {i}, Test Acc: {acc:.4f}")

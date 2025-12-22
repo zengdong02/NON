@@ -16,14 +16,14 @@ class PrePrompt(nn.Module):
         self.combine_prompt = CombinePrompt()
 
     def forward(self, seq):
-        x = seq[:]
+        x = seq
         pre_token = self.weighted_prompt(self.tokens)
         x = pre_token * x
         x = F.normalize(x, p=2, dim=1)
         x = self.global_token * x
         x = F.normalize(x, p=2, dim=1)
 
-        x1 = seq[:]
+        x1 = seq
         x1 = self.pre_token(x1)
 
         x2 = self.combine_prompt(x, x1)
@@ -43,7 +43,7 @@ class CombinePrompt(nn.Module):
 
     def forward(self, x, x1):
         hid = self.weight[0][0] * x + self.weight[0][1] * x1
-        return self.act(hid)
+        return hid
 
 class WeightedPrompt(nn.Module):
     def __init__(self, weighted_num):
@@ -66,11 +66,11 @@ class DownModel(nn.Module):
         self.pre_prompt = PrePrompt(pre_tokens, global_token, hidden_dim)
         self.balance_prompt = TokenPrompt(2 * hidden_dim)
         self.gcn = gcn
-        self.structureLearner = StructureLearner(edge_dropout, True)
+        self.structureLearner = StructureLearner(edge_dropout)
 
         self.nb_classes = num_classes
-        # self.alpha = nn.Parameter(torch.tensor(0.5))
-        self.register_buffer('alpha', torch.tensor(0.5))
+        self.alpha = nn.Parameter(torch.tensor(0.5))
+        # self.register_buffer('alpha', torch.tensor(0.5))
 
 
     def forward(self, features, adj, down_k):
