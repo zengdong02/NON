@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 from sklearn.decomposition import TruncatedSVD
 from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 from torch_geometric.datasets import Planetoid, WikipediaNetwork, WebKB
 from torch_geometric.utils import add_self_loops, degree, to_undirected
 
@@ -11,7 +12,7 @@ from config import Config
 ALL_DATASETS = Config.graphs_name
 GRAPHS_K = Config.graphs_k
 
-def load_processed_data(target_name, root='./data', hidden_dim=64):
+def load_processed_data(target_name, root='./data', hidden_dim=50):
     if target_name not in ALL_DATASETS:
         raise ValueError(f"目标必须是以下之一: {ALL_DATASETS}")
 
@@ -32,13 +33,19 @@ def load_processed_data(target_name, root='./data', hidden_dim=64):
         
         data = dataset[0]
 
-        # 2. SVD 降维 (独立处理，互不干扰)
-        svd = TruncatedSVD(n_components=hidden_dim, random_state=42)
-        reduced_x = svd.fit_transform(data.x.numpy())
-        scaler = StandardScaler()
-        reduced_x = scaler.fit_transform(reduced_x)
+        # SVD 降维 (独立处理，互不干扰)
+        # svd = TruncatedSVD(n_components=hidden_dim, random_state=42)
+        # reduced_x = svd.fit_transform(data.x.numpy())
+        # scaler = StandardScaler()
+        # reduced_x = scaler.fit_transform(reduced_x)
+        # data.x = torch.from_numpy(reduced_x).float()
+        # data.x = F.normalize(data.x, p=2, dim=1)
+
+        # PCA降维
+        pca = PCA(n_components=hidden_dim)
+        features_np = data.x.numpy()
+        reduced_x = pca.fit_transform(features_np)
         data.x = torch.from_numpy(reduced_x).float()
-        data.x = F.normalize(data.x, p=2, dim=1)
 
         # 3. 自动分流
         if name == target_name:
@@ -55,7 +62,7 @@ def get_norm_adj(data):
     num_nodes = data.x.shape[0]
     edge_index = data.edge_index
 
-    edge_index = to_undirected(edge_index, num_nodes=num_nodes)
+    # edge_index = to_undirected(edge_index, num_nodes=num_nodes)
 
     edge_index, _ = add_self_loops(edge_index, num_nodes=num_nodes, fill_value=1.0)
     
@@ -86,10 +93,7 @@ def process_graph_list(data_list):
     adj_list = []
     
     for i, data in enumerate(data_list):
-        # 1. 提取特征 (已经是 SVD 处理过的 float32)
         features_list.append(data.x)
-        
-        # 2. 提取标签 (int64)
         labels_list.append(data.y)
         
         adj = get_norm_adj(data)

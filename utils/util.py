@@ -67,128 +67,41 @@ def get_sparse_eye(num_nodes, device='cpu'):
         values, 
         (num_nodes, num_nodes), 
         device=device
-    )
+    ).coalesce()
    
-    return sparse_eye.coalesce()
+    return sparse_eye
 
 
-def inspect_tensor(name, tensor):
-    """详细打印 Tensor 的元数据信息"""
-    if not torch.is_tensor(tensor):
-        print(f"⚠️ [{name}] 不是 Tensor，类型是: {type(tensor)}")
-        if isinstance(tensor, (int, float)):
-             print(f"   Value: {tensor}")
-        return
-
-    # 基础信息
-    layout_type = "SPARSE" if tensor.is_sparse else "DENSE"
-    info = (
-        f"🔍 [{name}] "
-        f"Shape={tuple(tensor.shape)} | "
-        f"Type={layout_type} ({tensor.layout}) | "
-        f"Device={tensor.device} | "
-        f"Dtype={tensor.dtype}"
-    )
-
-    # 数值健康检查 (NaN/Inf)
-    # 注意：稀疏矩阵直接用 .any() 可能会报错或很慢，通常只检查 values
-    try:
-        if tensor.is_sparse:
-            values = tensor.values()
-            nnz = tensor._nnz()
-            info += f" | NNZ={nnz}" # 非零元素数量
-        else:
-            values = tensor
-        
-        has_nan = torch.isnan(values).any().item()
-        has_inf = torch.isinf(values).any().item()
-        
-        if has_nan: info += " | ❌ 含 NaN"
-        if has_inf: info += " | ❌ 含 Inf"
-        
-        # 打印部分统计值帮助判断量级
-        if values.numel() > 0 and not has_nan:
-             info += f" | Min={values.min().item():.4f}, Max={values.max().item():.4f}"
-
-    except Exception as e:
-        info += f" | (数值检查失败: {e})"
-
-    print(info)
-
-
-def sim_con(z_1, z_2, temperature):
-    """
-    计算两个特征矩阵之间的余弦相似度 (全稠密计算版本)。
-    
-    Args:
-        z_1: (N, D) Tensor, 节点特征 1
-        z_2: (N, D) Tensor, 节点特征 2
-        temperature: float, 温度系数 (例如 0.2)
-        
-    Returns:
-        logits: (N, N) Dense Tensor, 相似度矩阵 (未经过 exp)
-    """
-    # 1. 安全检查：如果输入是稀疏矩阵，强制转为稠密
-    #    这样能保证后续的矩阵乘法使用针对稠密优化的 torch.mm
-    if z_1.is_sparse:
-        z_1 = z_1.to_dense()
-    if z_2.is_sparse:
-        z_2 = z_2.to_dense()
-
-    # 2. L2 归一化 (L2 Normalization)
-    #    余弦相似度 = (A . B) / (|A| * |B|)
-    #    先对向量做归一化，之后只需要做点积即可
-    z_1_norm = F.normalize(z_1, dim=1)
-    z_2_norm = F.normalize(z_2, dim=1)
-    
-    # 3. 矩阵乘法 (Matrix Multiplication)
-    #    (N, D) @ (D, N) -> (N, N)
-    #    结果范围通常在 [-1/temp, 1/temp] 之间
-    similarity = torch.mm(z_1_norm, z_2_norm.t())
-    
-    return similarity / temperature
-
-def calc_lower_bound(z_1, z_2, pos, temperature=0.2):
-    """
-    方法 1: 全稠密计算 (适用于 N < 10000 的场景)
-    不管输入是 Sparse 还是 Dense，内部统一转为 Dense 运算，彻底杜绝 Sparse 算子报错。
-    """
+def sim_con(z1, z2, temperature):
     EOS = 1e-10
-    
-    # 1. 统一转为 Dense，确保设备一致
-    #    即使 pos 是 sparse，to_dense() 后也就 183x183，非常小
-    z_1 = z_1.to_dense() if z_1.is_sparse else z_1
-    z_2 = z_2.to_dense() if z_2.is_sparse else z_2
-    pos = pos.to_dense() if pos.is_sparse else pos
-    
-    # 确保在同一设备
-    if pos.device != z_1.device:
-        pos = pos.to(z_1.device)
+    z1_norm = torch.norm(z1, dim=-1, keepdim=True)
+    z2_norm = torch.norm(z2, dim=-1, keepdim=True)
+    dot_numerator = torch.mm(z1, z2.t())
+    dot_denominator = torch.mm(z1_norm, z2_norm.t()) + EOS
+    sim_matrix = dot_numerator / dot_denominator / temperature
+    return sim_matrix
 
-    # 2. 计算相似度 (结果必为 Dense)
-    #    sim_con 内部可以是简单的 (z1 @ z2.T) / temp
-    sim_matrix = torch.exp(sim_con(z_1, z_2, temperature))
 
-    # 3. Lori 1 (行归一化)
-    #    Dense / Dense -> Broadcasting 完美支持
-    row_sum = sim_matrix.sum(dim=1, keepdim=True) + EOS
-    prob_1 = sim_matrix / row_sum
+def calc_lower_bound(z_1, z_2, pos, temperature = 0.2):
+    EOS = 1e-10    
+    if pos.is_sparse:
+        pos = pos.to_dense()
+    matrix_1 = torch.exp(sim_con(z_1, z_2, temperature))
+    matrix_2 = matrix_1.t() 
     
-    #    element-wise 乘法 -> 求和 -> log
-    lori_1 = -torch.log(torch.clamp(prob_1.mul(pos).sum(dim=-1), min=EOS)).mean()
-
-    # 4. Lori 2 (列归一化)
-    col_sum = sim_matrix.sum(dim=0, keepdim=True) + EOS
-    prob_2 = sim_matrix / col_sum
+    row_sum_1 = torch.sum(matrix_1, dim=1).view(-1, 1) + EOS
+    matrix_1 = matrix_1 / row_sum_1
+    probs_1 = matrix_1.mul(pos).sum(dim=-1)
+    lori_1 = -torch.log(torch.clamp(probs_1, min=1e-10)).mean()    
     
-    #    注意：这里 prob_2 需要转置来匹配 pos 的行
-    #    或者：pos.t() * prob_2 (取决于你的数学定义，通常是对称的)
-    #    根据你之前的代码逻辑 prob_2 = prob_2.t()
-    prob_2 = prob_2.t()
-    
-    lori_2 = -torch.log(torch.clamp(prob_2.mul(pos).sum(dim=-1), min=EOS)).mean()
+    row_sum_2 = torch.sum(matrix_2, dim=1).view(-1, 1) + EOS
+    matrix_2 = matrix_2 / row_sum_2
+    probs_2 = matrix_2.mul(pos).sum(dim=-1)
+    lori_2 = -torch.log(torch.clamp(probs_2, min=1e-10)).mean()
 
     return (lori_1 + lori_2) / 2
+
+
 def knn_fast(X, k, b):
     device = X.device 
     
@@ -196,7 +109,6 @@ def knn_fast(X, k, b):
     index = 0
     num_nodes = X.shape[0]
     
-    # 只需要存储基础的三元组，移除 norm 相关变量
     values = torch.zeros(num_nodes * (k + 1), device=device)
     rows = torch.zeros(num_nodes * (k + 1), device=device)
     cols = torch.zeros(num_nodes * (k + 1), device=device)
@@ -229,7 +141,6 @@ def knn_fast(X, k, b):
     cols = cols.long()
     
     return rows, cols, values
-
 
 
 def get_k_shot_split(labels, k_shot, num_classes, seed):
@@ -284,7 +195,6 @@ def get_k_shot_split(labels, k_shot, num_classes, seed):
 def build_prototypes(embeddings, labels, support_idx, num_classes):
     prototypes = []
     for c in range(num_classes):
-        # 找出当前类别 c 在 support set 中的位置
         c_mask = (labels[support_idx] == c)
         c_emb = embeddings[support_idx][c_mask]
         
@@ -296,8 +206,7 @@ def build_prototypes(embeddings, labels, support_idx, num_classes):
         prototypes.append(proto)
     return torch.cat(prototypes, dim=0) # [Num_Classes, Dim]
 
-# --- 辅助函数：原型 Loss ---
+
 def prototypical_loss(prototypes, queries, targets):
-    # dists: [Batch, Num_Classes]
     dists = torch.cdist(queries, prototypes, p=2) 
     return F.cross_entropy(-dists, targets)

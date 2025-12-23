@@ -5,14 +5,19 @@ import torch.nn as nn
 class GCN(nn.Module):
     def __init__(self, input_dim, output_dim):
         super(GCN, self).__init__()
-        self.fc = nn.Linear(input_dim, output_dim, bias=True)
-        self.act = nn.PReLU()
+        self.fc = nn.Linear(input_dim, output_dim, bias=False)
         nn.init.xavier_uniform_(self.fc.weight)
-        nn.init.constant_(self.fc.bias, 0.0)
+
+        self.act = nn.PReLU()
+        
+        self.bias = nn.Parameter(torch.FloatTensor(output_dim))
+        self.bias.data.fill_(0.0)
+
 
     def forward(self, x, adj):
         x = self.fc(x)
         out = torch.spmm(adj, x)
+        out += self.bias
         return self.act(out)
 
 

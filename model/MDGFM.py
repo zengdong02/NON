@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import copy
 
 from .gcn_layers import GcnLayers
 from .token_prompt import TokenPrompt
@@ -28,26 +27,26 @@ class MDGFM(nn.Module):
         loss = 0
         for i in range (num_graphs):
             x_list[i] = self.pre_tokens[i](x_list[i])
+            x_list[i] = F.relu(x_list[i])
             x_list[i] = self.global_token(x_list[i])
             hid_x = x_list[i]
 
             temp_x = torch.sparse.mm(adj_list[i], x_list[i])
             x_list[i] = torch.cat((hid_x, temp_x), dim = 1)
             x_list[i] = self.balance_tokens[i](x_list[i])
+
             re_adj = self.structureLearner.graph_process(graphs_k[i], x_list[i])
+            pos_eye = get_sparse_eye(re_adj.size(0), re_adj.device)
 
             logits = self.gcn(hid_x, adj_list[i])
             re_logits = self.gcn(hid_x, re_adj)
 
-            pos_eye = get_sparse_eye(logits.shape[0], logits.device)
             loss += calc_lower_bound(logits, re_logits, pos_eye)
-            loss += calc_lower_bound(logits, re_logits, re_adj)
+            loss += calc_lower_bound(logits, re_logits, re_adj.detach())
         
         return loss / num_graphs
 
-    def get_backbone_model(self, freeze=True):
-        gcn_copy = copy.deepcopy(self.gcn)
-        
+    def get_backbone_model(self, freeze=True):        
         detached_pre_tokens = [t.token.detach() for t in self.pre_tokens]
         detached_global_token = self.global_token.token.detach()
 

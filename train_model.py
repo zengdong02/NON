@@ -69,7 +69,6 @@ def main():
 
     loaded_model = MDGFM(len(upstream_list), Config.hidden_dim, Config.output_dim, Config.gcn_num_layers, Config.gcn_dropout, Config.edge_dropout)
     loaded_model.load_state_dict(torch.load(Config.save_path, map_location=device))
-    loaded_model.to(device)
 
     pre_tokens, global_token, gcn = loaded_model.get_backbone_model(freeze=True)
     num_classes = len(torch.unique(down_labels))
@@ -91,9 +90,6 @@ def main():
         down_model = DownModel(pre_tokens, global_token, gcn, Config.hidden_dim, num_classes, Config.edge_dropout)
         down_model.to(device)
         down_optimiser = torch.optim.Adam(down_model.parameters(), lr=Config.down_lr, weight_decay=5e-4) 
-        
-        # best_down_loss = float('inf')
-        # best_down_state = None
 
         for _ in range(Config.down_epoch):
             down_model.train()
@@ -105,11 +101,10 @@ def main():
             if Config.k_shot == 1:
                 emb_view2 = down_model(down_features, down_adj, down_k)
                 queries = emb_view2[support_idx]
-                loss = prototypical_loss(prototypes, queries, support_labels)
             else:
                 queries = embeddings[support_idx]
-                loss = prototypical_loss(prototypes, queries, support_labels)
 
+            loss = prototypical_loss(prototypes, queries, support_labels)
             loss.backward()
             down_optimiser.step()
         
@@ -134,5 +129,4 @@ def main():
 
 
 if __name__ == '__main__':
-    torch.autograd.set_detect_anomaly(True)
     main()

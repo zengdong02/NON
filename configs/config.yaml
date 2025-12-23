@@ -19,7 +19,7 @@ graphs_k:
 
 PreModel:
   lr: 0.0075
-  hidden_dim: 64
+  hidden_dim: 50
   output_dim: 256
   gcn_num_layers: 3
   edge_dropout: 0.5 
@@ -31,5 +31,5 @@ DownModel:
   down_dataset: Cora #Cora Pubmed Citeseer Chameleon Squirrel Cornell
   k_shot: 1
   down_tasks: 50
-  down_epoch: 100
+  down_epoch: 200
   down_lr: 0.001
