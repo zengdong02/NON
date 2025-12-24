@@ -1,5 +1,5 @@
 from utils.load_datasets import load_processed_data, process_graph_list, get_norm_adj
-from utils.util import set_seed, to_device, get_k_shot_split, build_prototypes, prototypical_loss
+from utils.util import set_seed, to_device, get_k_shot_split, build_prototypes, prototypical_loss, calculate_acc
 from config import Config
 from model.MDGFM import MDGFM
 from model.DownModel import DownModel
@@ -7,12 +7,18 @@ from model.DownModel import DownModel
 import torch
 import torch.optim as optim
 from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter  
+import os
 
 
 def main():
 
     set_seed(Config.seed)
     device = Config.device
+
+    log_dir = os.path.join(Config.save_dir, 'tensorboard_logs', f"run_{Config.timestamp}")
+    writer = SummaryWriter(log_dir=log_dir)
+    print(f"TensorBoard log dir: {log_dir}")
 
     upstream_list, graphs_k, downstream_data, down_k = load_processed_data(target_name=Config.down_dataset, hidden_dim=Config.hidden_dim)
     
@@ -48,12 +54,14 @@ def main():
         optimiser.step()
 
         current_loss = loss.item()
+
+        writer.add_scalar('Pretrain/Loss', current_loss, epoch)
         # scheduler.step(current_loss)
         if current_loss < best_loss:
             best_loss = current_loss
             model_wait = 0
             torch.save(model.state_dict(), Config.save_path)
-            tqdm.write(f"Epoch {epoch}: New best loss {best_loss:.4f}, model saved.")
+            # tqdm.write(f"Epoch {epoch}: New best loss {best_loss:.4f}, model saved.")
         else:
             model_wait += 1
 
@@ -91,6 +99,7 @@ def main():
         down_model.to(device)
         down_optimiser = torch.optim.Adam(down_model.parameters(), lr=Config.down_lr, weight_decay=5e-4) 
 
+        epoch_losses = []
         for _ in range(Config.down_epoch):
             down_model.train()
             down_optimiser.zero_grad()
@@ -107,6 +116,10 @@ def main():
             loss = prototypical_loss(prototypes, queries, support_labels)
             loss.backward()
             down_optimiser.step()
+            epoch_losses.append(loss.item())
+        
+        avg_task_loss = sum(epoch_losses) / len(epoch_losses)
+        writer.add_scalar('Downstream/Avg_Task_Loss', avg_task_loss, i)
         
         down_model.eval()
         with torch.no_grad():
@@ -114,18 +127,20 @@ def main():
             final_prototypes = build_prototypes(embeddings, down_labels, support_idx, num_classes)
             query_emb = embeddings[query_idx]
             query_lbl = down_labels[query_idx]  
-            
-            dists = torch.cdist(query_emb, final_prototypes, p=2)
-            preds = torch.argmin(dists, dim=1)
-            acc = (preds == query_lbl).float().mean().item() * 100
-
+          
+            acc = calculate_acc(final_prototypes, query_emb, query_lbl)
             accs.append(acc)
-            tqdm.write(f"Run {i}, Test Acc: {acc:.4f}")
+
+            writer.add_scalar('Downstream/Task_Accuracy', acc, i)
+            current_mean_acc = torch.tensor(accs).mean().item()
+            writer.add_scalar('Downstream/Running_Mean_Acc', current_mean_acc, i)
+            # tqdm.write(f"Run {i}, Test Acc: {acc:.4f}")
 
     print('-' * 100)
     accs_tensor = torch.tensor(accs)
     print('Mean:[{:.4f}]'.format(accs_tensor.mean().item()))
     print('Std :[{:.4f}]'.format(accs_tensor.std().item()))
+    writer.close()
 
 
 if __name__ == '__main__':

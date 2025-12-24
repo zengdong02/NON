@@ -112,6 +112,9 @@ def knn_fast(X, k, b):
     values = torch.zeros(num_nodes * (k + 1), device=device)
     rows = torch.zeros(num_nodes * (k + 1), device=device)
     cols = torch.zeros(num_nodes * (k + 1), device=device)
+
+    norm_row = torch.zeros(X.shape[0], device=device)
+    norm_col = torch.zeros(X.shape[0], device=device)
     
     while index < num_nodes:
         if (index + b) > num_nodes:
@@ -134,11 +137,16 @@ def knn_fast(X, k, b):
         
         current_rows = torch.arange(index, end, device=device).view(-1, 1).repeat(1, k + 1).view(-1)
         rows[start_idx:end_idx] = current_rows.float()
+
+        norm_row[index: end] = torch.sum(vals, dim=1)
+        norm_col.index_add_(-1, inds.view(-1), vals.view(-1))
         
         index += b
         
     rows = rows.long()
     cols = cols.long()
+    norm = norm_row + norm_col
+    values *= (torch.pow(norm[rows], -0.5) * torch.pow(norm[cols], -0.5))
     
     return rows, cols, values
 
@@ -207,6 +215,20 @@ def build_prototypes(embeddings, labels, support_idx, num_classes):
     return torch.cat(prototypes, dim=0) # [Num_Classes, Dim]
 
 
-def prototypical_loss(prototypes, queries, targets):
-    dists = torch.cdist(queries, prototypes, p=2) 
-    return F.cross_entropy(-dists, targets)
+def prototypical_loss(prototypes, queries, targets, temperature=0.2):
+    prototypes = F.normalize(prototypes, dim=1)
+    queries = F.normalize(queries, dim=1)
+
+    logits = torch.mm(queries, prototypes.t()) / temperature
+    return F.cross_entropy(logits, targets)
+
+
+def calculate_acc(prototypes, queries, query_lbl):
+    prototypes = F.normalize(prototypes, dim=1)
+    queries = F.normalize(queries, dim=1)
+
+    logits = torch.mm(queries, prototypes.t())
+    preds = torch.argmax(logits, dim=1)
+
+    acc = (preds == query_lbl).float().mean().item() * 100
+    return acc

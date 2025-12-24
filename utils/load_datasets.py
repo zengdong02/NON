@@ -62,7 +62,7 @@ def get_norm_adj(data):
     num_nodes = data.x.shape[0]
     edge_index = data.edge_index
 
-    # edge_index = to_undirected(edge_index, num_nodes=num_nodes)
+    edge_index = to_undirected(edge_index, num_nodes=num_nodes)
 
     edge_index, _ = add_self_loops(edge_index, num_nodes=num_nodes, fill_value=1.0)
     

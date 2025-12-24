@@ -21,15 +21,15 @@ PreModel:
   lr: 0.0075
   hidden_dim: 50
   output_dim: 256
-  gcn_num_layers: 3
-  edge_dropout: 0.5 
+  gcn_num_layers: 4
+  edge_dropout: 0.5
   gcn_dropout: 0.1
-  epochs: 60
+  epochs: 200
   patience: 10
 
 DownModel:
   down_dataset: Cora #Cora Pubmed Citeseer Chameleon Squirrel Cornell
   k_shot: 1
   down_tasks: 50
-  down_epoch: 200
+  down_epoch: 20
   down_lr: 0.001
